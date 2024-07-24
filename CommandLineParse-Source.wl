@@ -11,7 +11,13 @@ CommandLineParse[___] := $Failed;
 	);
 
 	(* ::Subsection:: *)(* Compound command flag lookup *)
-	CommandLineParse[str_String?(StringContainsQ[#, (";"|"&&")]&), flag_String] := (
+	CommandLineParse[str_String?(StringContainsQ[#, (";"|"&&")]&), flag_String] := Module[{
+		noFlagFail =  Failure["flagnotfound",<|
+					"MessageTemplate" -> "Flag `1` not found in the commands: `2`.",
+					"MessageParameters"->{ flag, str }
+				|>
+			]
+		},
 		Dataset[<|StringTrim[ StringSplit[#, "-"][[1]] ] -> Normal[
 					CommandLineParse[#,flag]
 				]
@@ -19,17 +25,13 @@ CommandLineParse[___] := $Failed;
 		] /. {
 			{
 				OrderlessPatternSequence[
-					rest:<|_String-> _String|Missing[] |>...,
-					missing:<| _String->_?FailureQ |>...
+					rest:<|_String-> (_String|_List|_Missing) |>...,
+					missing:<| _String -> _?FailureQ |>..
 				]
-			} :> { rest },
-			{} -> Failure["flagnotfound",<|
-					"MessageTemplate" -> "Flag `1` not found in the commands: `2`.",
-					"MessageParameters"->{ flag, str }
-				|>
-			]
+			} :> ({ rest } /. {} -> noFlagFail) ,
+			{} ->noFlagFail
 		}
-	);
+	];
 
 	(* ::Subsection:: *)(* Compound command parse *)
 	CommandLineParse[str_String?(StringContainsQ[#, (";"|"&&")]&)] := (
@@ -78,33 +80,30 @@ CommandLineParse[ cmd_List:$CommandLine, flagList:{ flag___String }:{}]/;(
 	Select[cmd, StringContainsQ["-"]]=!={}
 	&&
 	AllTrue[flagList, (StringPart[#,1]==="-")&]
-):= Block[{res, flags,
-		cache={},
-		command = StringTrim@(StringSplit[StringRiffle[cmd], "-"][[1]])
+):= Block[{flags,
+		res = CreateDataStructure["ExtensibleVector"],
+		cache = CreateDataStructure["ExtensibleVector"],
+		command = StringTrim@(StringSplit[StringRiffle[cmd], " -"][[1]])
 	},
-	res = Reap[
-		Do[
-			If[ StringMatchQ[StringPart[elem, 1], "-"],
-				If[cache =!={},
-					Sow[cache]
-				];
-				cache = {};
-				AppendTo[cache, elem];
-				If[ elem === cmd[[-1]],
-					Sow[cache]
-				]
-				,
-				If[cache =!={},
-					AppendTo[cache, elem];
-					If[ elem === cmd[[-1]],
-						Sow[cache]
-					]
-				]
+	Do[
+		If[StringMatchQ[StringPart[elem,1],"-"],
+			If[Not@cache["EmptyQ"],
+				res["Append",cache//Normal]
+			];
+			cache["DropAll"];
+			cache["Append",elem];
+			If[elem===cmd[[-1]],
+				res["Append",cache//Normal]
 			],
-			{elem, cmd}
-		]
-	][[2,1]];
-
+			If[Not@cache["EmptyQ"],
+				cache["Append",elem];
+				If[elem===cmd[[-1]],
+					res["Append",cache//Normal]
+				]
+			]
+		],
+		{elem,cmd}
+	];
 	res = Map[
 		Function[
 			<|command-><|
@@ -115,21 +114,20 @@ CommandLineParse[ cmd_List:$CommandLine, flagList:{ flag___String }:{}]/;(
 				}
 			|>|>
 		],
-		res
+		Normal@res
 	]//Dataset;
-
 	flags = res[All, command, "Flag"];
 
 	If[flagList==={},
 		res,
-		Catch @ Table[
+		First[Reap @ Table[
 			If[MemberQ[flags,flg],
 				Normal[
 					res[All,command][Select[#Flag==flg &], "Parameter"]
 						/. Missing[] -> Nothing
 				]
 				,
-				Throw[
+				Sow[
 					Failure["flagnotfound",<|
 						"MessageTemplate" -> "Flag `1` not found in the command list `2`.",
 						"MessageParameters"->{ flg, cmd }
@@ -137,10 +135,11 @@ CommandLineParse[ cmd_List:$CommandLine, flagList:{ flag___String }:{}]/;(
 				]
 			],
 			{flg, flagList}
-		] /. {
+		]] /. {
 			{{a_}}:>a,
 			{{a__}}:>{a},
-			{{}} :> Missing[]
+			{{}}:>Missing["noarg"],
+			{a_Failure}:>a
 		}
 	]
 ];
