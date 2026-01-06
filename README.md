@@ -1,3 +1,5 @@
+**This function is now depricated in place of [CommandLineTools](https://www.github.com/ToneAr/CommandLineTools)**
+
 # resource-function-COMMAND-LINE-PARSE
 
 ## Description 
